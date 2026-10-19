@@ -1,5 +1,10 @@
 """ReportData -> XLSX / HTML / 메일 본문 변환."""
 import io
+import html
+import json
+from pathlib import Path
+
+import pandas as pd
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
@@ -12,6 +17,8 @@ HEADER_FILL = PatternFill("solid", fgColor="E5E7EB")
 TOTAL_FILL = PatternFill("solid", fgColor="FEF3C7")
 THIN = Side(style="thin", color="D1D5DB")
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
+
+_TEMPLATE = Path(__file__).parent / "templates" / "report_v2.html"
 
 
 def _title(ws, cell, text, size=14, bold=True, color="FFFFFF", fill=None):
@@ -278,28 +285,6 @@ def _sheet_detail(ws, rd):
 
 # ---------------- HTML ----------------
 
-_HTML_STYLE = """
-<style>
-  body { font-family: -apple-system, "Malgun Gothic", sans-serif; color:#111827; background:#F9FAFB; margin:0; padding:32px; }
-  .wrap { max-width: 1000px; margin: 0 auto; }
-  h1 { font-size: 20px; margin-bottom:4px; }
-  .subtitle { color:#6B7280; font-size:13px; margin-bottom:24px; }
-  .kpi-row { display:flex; gap:12px; margin-bottom:28px; flex-wrap:wrap; }
-  .kpi { background:#fff; border:1px solid #E5E7EB; border-radius:10px; padding:14px 18px; flex:1; min-width:140px; }
-  .kpi .label { font-size:12px; color:#6B7280; }
-  .kpi .value { font-size:20px; font-weight:700; margin-top:4px; }
-  section { margin-bottom:32px; }
-  h2 { font-size:15px; color:#4338CA; border-left:4px solid #4338CA; padding-left:8px; margin-bottom:12px; }
-  table { border-collapse: collapse; width:100%; background:#fff; font-size:13px; }
-  th, td { border:1px solid #E5E7EB; padding:6px 10px; text-align:right; }
-  th { background:#F3F4F6; text-align:center; }
-  td:first-child, th:first-child { text-align:left; }
-  tr.total td { background:#FEF3C7; font-weight:700; }
-  .table-scroll { overflow-x:auto; }
-</style>
-"""
-
-
 def _df_to_html_rows(df, cols, headers, total_label_col=None, total_values=None, formats=None):
     out = ["<tr>" + "".join(f"<th>{h}</th>" for h in headers) + "</tr>"]
     for _, r in df.iterrows():
@@ -343,9 +328,45 @@ def _fmt(v, kind):
     return v
 
 
-def build_html(rd, meta) -> str:
-    overall_rows = render_overall_status_table(rd.overall_status)
+def _report_data(rd, meta) -> dict:
+    """ver2 리포트 페이지(JS)가 읽는 예약 데이터. 확정·취소 건만 담는다."""
+    df = rd.df[rd.df["is_confirmed"] | rd.df["is_cancelled"]]
+    rooms = sorted(df["객실명_정리"].unique().tolist())
+    rates = sorted(df["패키지명_정리"].unique().tolist())
+    room_idx = {v: i for i, v in enumerate(rooms)}
+    rate_idx = {v: i for i, v in enumerate(rates)}
+    day = lambda v: v.strftime("%Y-%m-%d") if pd.notna(v) else None
+    rows = [
+        [int(r.is_cancelled), day(r.예약일), day(r.체크인), int(r.박수) or 1, int(r.객실수) or 1,
+         room_idx[r.객실명_정리], rate_idx[r.패키지명_정리], round(float(r.판매가)), round(float(r.입금가))]
+        for r in df.itertuples(index=False)
+        if pd.notna(r.체크인)
+    ]
+    routes = sorted({v for v in df["예약경로"] if v})
+    return {
+        "file": "", "hotel": meta["hotel"], "influencer": meta["influencer"],
+        "salePeriod": meta["sale_period"], "stayPeriod": meta["stay_period"],
+        "route": ", ".join(routes), "rooms": rooms, "rates": rates, "rows": rows,
+    }
 
+
+def _legacy_section(title, table_html):
+    return f'<section class="card"><h2>{html.escape(title)}</h2><div class="tbl-wrap"><table class="lg">{table_html}</table></div></section>'
+
+
+def _overall_rows(df) -> str:
+    out = ["<tr>" + "".join(f"<th>{h}</th>" for h in ["숙소", "상태", "건 수", "박 수", "매출액"]) + "</tr>"]
+    for _, r in df.iterrows():
+        cls = " class='sum'" if r["상태"] == "전체" else ""
+        out.append(
+            f"<tr{cls}><td class='l'>{html.escape(str(r['숙소']))}</td><td class='l'>{r['상태']}</td>"
+            f"<td>{fmt_int(r['건수'])}</td><td>{fmt_int(r['박수'])}</td><td>{fmt_won(r['매출액'])}</td></tr>"
+        )
+    return "".join(out)
+
+
+def build_html(rd, meta) -> str:
+    """ver2 리포트(분석 코멘트·그래프·선호도, 판매가/입금가 전환) + 하단에 기존 상세 표."""
     pkg_rows = _df_to_html_rows(
         rd.package_analysis, ["패키지", "건수", "박수", "매출액", "ADR_박", "ADR_건", "취소건", "취소율", "매출비중"],
         ["패키지", "건 수", "박 수", "매출액", "ADR(박)", "ADR(건)", "취소건", "취소율", "매출비중"],
@@ -363,45 +384,33 @@ def build_html(rd, meta) -> str:
         ["객실명", "건 수", "박 수", "확정 매출", "ADR(원/박)", "건당 평균단가", "비중"],
         formats=[None, "int", "int", "won", "won", "won", "pct"],
     )
-    daily_rows = "".join(
+    daily_rows = "<tr><th>날짜</th><th>요일</th><th>건 수</th><th>박 수</th><th>매출액</th><th>누적 매출액</th></tr>" + "".join(
         f"<tr><td>{r['판매일'].strftime('%m-%d')}</td><td>{r['요일']}</td><td>{fmt_int(r['건수'])}</td>"
         f"<td>{fmt_int(r['박수'])}</td><td>{fmt_won(r['매출액'])}</td><td>{fmt_won(r['누적매출액'])}</td></tr>"
         for _, r in rd.daily_sales.iterrows()
     )
-    weekday_rows = "".join(
+    weekday_rows = "<tr><th>요일</th><th>건 수</th><th>박 수</th><th>매출액</th><th>ADR</th><th>비중</th></tr>" + "".join(
         f"<tr><td>{r['요일']}</td><td>{fmt_int(r['건수'])}</td><td>{fmt_int(r['박수'])}</td>"
         f"<td>{fmt_won(r['매출액'])}</td><td>{fmt_won(r['ADR'])}</td><td>{fmt_pct(r['비중'])}</td></tr>"
         for _, r in rd.weekday_checkin.iterrows()
     )
-
-    return f"""<!doctype html><html><head><meta charset="utf-8">
-<title>{meta['influencer']} x {meta['hotel']} 실적 요약</title>
-{_HTML_STYLE}
-</head><body><div class="wrap">
-<h1>{meta['influencer']} × {meta['hotel']} — 공동구매 매출 실적 요약</h1>
-<div class="subtitle">판매기간: {meta['sale_period']} &nbsp;|&nbsp; 투숙기간: {meta['stay_period']}</div>
-
-<div class="kpi-row">
-  <div class="kpi"><div class="label">확정 건수(확정+완료)</div><div class="value">{fmt_int(rd.confirmed_count)}</div></div>
-  <div class="kpi"><div class="label">확정 박수</div><div class="value">{fmt_int(rd.confirmed_nights)}</div></div>
-  <div class="kpi"><div class="label">확정 매출액</div><div class="value">{fmt_won(rd.confirmed_revenue)}</div></div>
-  <div class="kpi"><div class="label">취소 건수</div><div class="value">{fmt_int(rd.cancelled_count)}</div></div>
-  <div class="kpi"><div class="label">취소율</div><div class="value">{fmt_pct(rd.cancel_rate)}</div></div>
-</div>
-
-<section><h2>전체 예약 현황</h2><div class="table-scroll">{overall_rows}</div></section>
-<section><h2>패키지별 분석 (확정 기준)</h2><div class="table-scroll"><table>{pkg_rows}</table></div></section>
-<section><h2>시설별 객실 분석</h2><div class="table-scroll"><table>{room_rows}</table></div></section>
-<section><h2>일별 판매 현황</h2><div class="table-scroll"><table>
-<tr><th>날짜</th><th>요일</th><th>건 수</th><th>박 수</th><th>매출액</th><th>누적 매출액</th></tr>
-{daily_rows}
-</table></div></section>
-<section><h2>체크인 요일별 현황 (확정 기준)</h2><div class="table-scroll"><table>
-<tr><th>요일</th><th>건 수</th><th>박 수</th><th>매출액</th><th>ADR</th><th>비중</th></tr>
-{weekday_rows}
-</table></div></section>
-<section><h2>객실별 ADR (확정 기준 / 높은 순)</h2><div class="table-scroll"><table>{adr_room_rows}</table></div></section>
-</div></body></html>"""
+    legacy = "\n  ".join([
+        '<div class="legacy-head">상세 표 · 판매가 기준</div>',
+        _legacy_section("전체 예약 현황", _overall_rows(rd.overall_status)),
+        _legacy_section("패키지별 분석 (확정 기준)", pkg_rows),
+        _legacy_section("시설별 객실 분석", room_rows),
+        _legacy_section("일별 판매 현황", daily_rows),
+        _legacy_section("체크인 요일별 현황 (확정 기준)", weekday_rows),
+        _legacy_section("객실별 ADR (확정 기준 / 높은 순)", adr_room_rows),
+    ])
+    data = json.dumps(_report_data(rd, meta), ensure_ascii=False).replace("</", "<\\/")
+    title = html.escape(f"{meta['influencer']} × {meta['hotel']} 공동구매 실적 리포트")
+    return (
+        _TEMPLATE.read_text(encoding="utf-8")
+        .replace("__TITLE__", title)
+        .replace("__LEGACY_SECTIONS__", legacy)
+        .replace("__REPORT_DATA__", data)
+    )
 
 
 def build_email_body(rd, meta, sender_name="[담당자명]") -> str:
