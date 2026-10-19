@@ -6,7 +6,7 @@ from report_engine import (
     load_reservations, filter_by_channel, build_name_mapping, apply_name_cleaning,
     ReportData, fmt_int, fmt_won, fmt_pct,
 )
-from exporters import build_workbook, build_html, build_email_body, render_overall_status_table
+from exporters import build_workbook, build_html, build_pdf, build_email_body, render_overall_status_table
 import charts
 
 st.set_page_config(page_title="공동구매 매출 실적 리포트", page_icon="📊", layout="wide")
@@ -105,11 +105,18 @@ if generate:
         "sale_period_kr": fmt_range_kr(sale_range),
     }
     rd = ReportData(df, meta)
+    pdf_bytes, pdf_error = None, None
+    with st.spinner("PDF 만드는 중…"):
+        try:
+            pdf_bytes = build_pdf(rd, meta)
+        except Exception as e:
+            pdf_error = str(e) or e.__class__.__name__
     st.session_state.report = {
         "rd": rd, "meta": meta,
         "xlsx": build_workbook(rd, meta),
         "html": build_html(rd, meta),
         "email": build_email_body(rd, meta),
+        "pdf": pdf_bytes, "pdf_error": pdf_error,
     }
 
 report = st.session_state.report
@@ -128,7 +135,7 @@ if report:
     k4.metric("취소 건수", fmt_int(rd.cancelled_count))
     k5.metric("취소율", fmt_pct(rd.cancel_rate))
 
-    dcol1, dcol2 = st.columns(2)
+    dcol1, dcol2, dcol3 = st.columns(3)
     with dcol1:
         st.download_button(
             "📄 HTML 다운로드", data=report["html"].encode("utf-8"),
@@ -142,6 +149,14 @@ if report:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )
+    with dcol3:
+        st.download_button(
+            "🖨️ PDF 다운로드 (1장 요약)", data=report["pdf"] or b"",
+            file_name=f"report_{meta['influencer']}_X_{meta['hotel']}.pdf",
+            mime="application/pdf", use_container_width=True, disabled=report["pdf"] is None,
+        )
+    if report["pdf_error"]:
+        st.warning(f"PDF를 만들지 못했어요: {report['pdf_error']}")
 
     st.subheader("📧 메일 본문")
     email_text = st.text_area("자유롭게 수정할 수 있어요", value=report["email"], height=420)

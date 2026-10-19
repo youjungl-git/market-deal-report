@@ -2,6 +2,9 @@
 import io
 import html
 import json
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 
 import pandas as pd
@@ -19,6 +22,11 @@ THIN = Side(style="thin", color="D1D5DB")
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 
 _TEMPLATE = Path(__file__).parent / "templates" / "report_v2.html"
+_FONT = Path(__file__).parent / "fonts" / "PretendardVariable.woff2"
+_CHROME_CANDIDATES = [
+    "chromium", "chromium-browser", "google-chrome",
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+]
 
 
 def _title(ws, cell, text, size=14, bold=True, color="FFFFFF", fill=None):
@@ -365,8 +373,11 @@ def _overall_rows(df) -> str:
     return "".join(out)
 
 
-def build_html(rd, meta) -> str:
-    """ver2 리포트(분석 코멘트·그래프·선호도, 판매가/입금가 전환) + 하단에 기존 상세 표."""
+def build_html(rd, meta, pdf=False) -> str:
+    """ver2 리포트(분석 코멘트·그래프·선호도, 판매가/입금가 전환) + 하단에 기존 상세 표.
+
+    pdf=True면 KPI ~ 요금제별 선호도만 A4 한 장에 맞춘 인쇄용 페이지를 만든다.
+    """
     pkg_rows = _df_to_html_rows(
         rd.package_analysis, ["패키지", "건수", "박수", "매출액", "ADR_박", "ADR_건", "취소건", "취소율", "매출비중"],
         ["패키지", "건 수", "박 수", "매출액", "ADR(박)", "ADR(건)", "취소건", "취소율", "매출비중"],
@@ -403,14 +414,50 @@ def build_html(rd, meta) -> str:
         _legacy_section("체크인 요일별 현황 (확정 기준)", weekday_rows),
         _legacy_section("객실별 ADR (확정 기준 / 높은 순)", adr_room_rows),
     ])
-    data = json.dumps(_report_data(rd, meta), ensure_ascii=False).replace("</", "<\\/")
+    report = _report_data(rd, meta)
+    report["pdf"] = pdf
+    data = json.dumps(report, ensure_ascii=False).replace("</", "<\\/")
     title = html.escape(f"{meta['influencer']} × {meta['hotel']} 공동구매 실적 리포트")
     return (
         _TEMPLATE.read_text(encoding="utf-8")
         .replace("__TITLE__", title)
         .replace("__LEGACY_SECTIONS__", legacy)
         .replace("__REPORT_DATA__", data)
+        .replace("__PDF_HEAD__", _pdf_head() if pdf else "")
     )
+
+
+def _pdf_head() -> str:
+    # 인쇄 시점에 웹폰트가 덜 받아졌을 수 있어 로컬 폰트 파일을 우선 사용
+    return (
+        '<style>@font-face{font-family:"Pretendard Variable";font-weight:45 920;'
+        f'src:url("{_FONT.resolve().as_uri()}") format("woff2-variations")}}</style>'
+    )
+
+
+def _find_chrome():
+    for c in _CHROME_CANDIDATES:
+        path = shutil.which(c) or (c if Path(c).exists() else None)
+        if path:
+            return path
+    return None
+
+
+def build_pdf(rd, meta) -> bytes:
+    """KPI ~ 요금제별 선호도를 A4 한 장 PDF로. 헤드리스 Chromium으로 인쇄한다."""
+    chrome = _find_chrome()
+    if not chrome:
+        raise RuntimeError("PDF를 만들 Chromium을 찾지 못했어요. packages.txt에 chromium이 있는지 확인해 주세요.")
+    with tempfile.TemporaryDirectory() as tmp:
+        src, out = Path(tmp) / "report.html", Path(tmp) / "report.pdf"
+        src.write_text(build_html(rd, meta, pdf=True), encoding="utf-8")
+        subprocess.run(
+            [chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
+             "--allow-file-access-from-files", "--no-pdf-header-footer", "--virtual-time-budget=8000",
+             f"--print-to-pdf={out}", src.as_uri()],
+            check=True, capture_output=True, timeout=90,
+        )
+        return out.read_bytes()
 
 
 def build_email_body(rd, meta, sender_name="[담당자명]") -> str:
