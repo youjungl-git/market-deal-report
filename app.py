@@ -143,6 +143,13 @@ if report:
             use_container_width=True,
         )
 
+    st.subheader("📧 메일 본문")
+    email_text = st.text_area("자유롭게 수정할 수 있어요", value=report["email"], height=420)
+    st.download_button(
+        "메일 본문 텍스트 다운로드", data=email_text.encode("utf-8"),
+        file_name="mail_body.txt", mime="text/plain",
+    )
+
     st.subheader("📈 시각화 대시보드")
 
     st.markdown("**일별 판매 추이** (판매기간 기준, 전체 상태 포함)")
@@ -193,10 +200,3 @@ if report:
         st.dataframe(rd.adr_room, use_container_width=True, hide_index=True)
     with st.expander("▶ 체크인 일자별 상세 (확정 기준)"):
         st.dataframe(rd.checkin_detail, use_container_width=True, hide_index=True)
-
-    st.subheader("📧 메일 본문")
-    email_text = st.text_area("자유롭게 수정할 수 있어요", value=report["email"], height=420)
-    st.download_button(
-        "메일 본문 텍스트 다운로드", data=email_text.encode("utf-8"),
-        file_name="mail_body.txt", mime="text/plain",
-    )
