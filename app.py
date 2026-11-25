@@ -6,7 +6,7 @@ from report_engine import (
     load_reservations, filter_by_channel, build_name_mapping, apply_name_cleaning,
     ReportData, fmt_int, fmt_won, fmt_pct,
 )
-from exporters import build_workbook, build_html, build_pdf, build_email_body, render_overall_status_table
+from exporters import build_workbook, build_html, build_pdf, build_image, build_email_body, render_overall_status_table
 import charts
 
 st.set_page_config(page_title="공동구매 매출 실적 리포트", page_icon="📊", layout="wide")
@@ -111,12 +111,19 @@ if generate:
             pdf_bytes = build_pdf(rd, meta)
         except Exception as e:
             pdf_error = str(e) or e.__class__.__name__
+    img_bytes, img_error = None, None
+    with st.spinner("메일용 이미지 만드는 중…"):
+        try:
+            img_bytes = build_image(rd, meta)
+        except Exception as e:
+            img_error = str(e) or e.__class__.__name__
     st.session_state.report = {
         "rd": rd, "meta": meta,
         "xlsx": build_workbook(rd, meta),
         "html": build_html(rd, meta),
         "email": build_email_body(rd, meta),
         "pdf": pdf_bytes, "pdf_error": pdf_error,
+        "img": img_bytes, "img_error": img_error,
     }
 
 report = st.session_state.report
@@ -135,7 +142,7 @@ if report:
     k4.metric("취소 건수", fmt_int(rd.cancelled_count))
     k5.metric("취소율", fmt_pct(rd.cancel_rate))
 
-    dcol1, dcol2, dcol3 = st.columns(3)
+    dcol1, dcol2, dcol3, dcol4 = st.columns(4)
     with dcol1:
         st.download_button(
             "📄 HTML 다운로드", data=report["html"].encode("utf-8"),
@@ -155,6 +162,14 @@ if report:
             file_name=f"report_{meta['influencer']}_X_{meta['hotel']}.pdf",
             mime="application/pdf", use_container_width=True, disabled=report["pdf"] is None,
         )
+    with dcol4:
+        st.download_button(
+            "🖼️ 이미지 저장 (메일 본문용)", data=report.get("img") or b"",
+            file_name=f"report_{meta['influencer']}_X_{meta['hotel']}.png",
+            mime="image/png", use_container_width=True, disabled=not report.get("img"),
+        )
+    if report.get("img_error"):
+        st.warning(f"이미지를 만들지 못했어요: {report['img_error']}")
     if report["pdf_error"]:
         st.warning(f"PDF를 만들지 못했어요: {report['pdf_error']}")
 

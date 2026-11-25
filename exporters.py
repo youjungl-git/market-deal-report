@@ -373,7 +373,7 @@ def _overall_rows(df) -> str:
     return "".join(out)
 
 
-def build_html(rd, meta, pdf=False) -> str:
+def build_html(rd, meta, pdf=False, img=False) -> str:
     """ver2 리포트(분석 코멘트·그래프·선호도, 판매가/입금가 전환) + 하단에 기존 상세 표.
 
     pdf=True면 KPI ~ 요금제별 선호도만 A4 한 장에 맞춘 인쇄용 페이지를 만든다.
@@ -416,6 +416,7 @@ def build_html(rd, meta, pdf=False) -> str:
     ])
     report = _report_data(rd, meta)
     report["pdf"] = pdf
+    report["img"] = img
     data = json.dumps(report, ensure_ascii=False).replace("</", "<\\/")
     title = html.escape(f"{meta['influencer']} × {meta['hotel']} 공동구매 실적 리포트")
     return (
@@ -423,7 +424,7 @@ def build_html(rd, meta, pdf=False) -> str:
         .replace("__TITLE__", title)
         .replace("__LEGACY_SECTIONS__", legacy)
         .replace("__REPORT_DATA__", data)
-        .replace("__PDF_HEAD__", _pdf_head() if pdf else "")
+        .replace("__PDF_HEAD__", _pdf_head() if (pdf or img) else "")
     )
 
 
@@ -458,6 +459,38 @@ def build_pdf(rd, meta) -> bytes:
             check=True, capture_output=True, timeout=90,
         )
         return out.read_bytes()
+
+
+def build_image(rd, meta, width=880, scale=2) -> bytes:
+    """PDF 요약본과 같은 범위(확정 예약 KPI ~ 요금제별 선호도)를 메일 본문용 PNG로.
+
+    880px 폭·큰 글씨로 그린 뒤 2배 해상도로 찍어, 메일에서 줄여 보여도 글씨가 또렷하다.
+    """
+    from PIL import Image, ImageChops
+
+    chrome = _find_chrome()
+    if not chrome:
+        raise RuntimeError("이미지를 만들 Chromium을 찾지 못했어요. packages.txt에 chromium이 있는지 확인해 주세요.")
+    with tempfile.TemporaryDirectory() as tmp:
+        src, out = Path(tmp) / "report.html", Path(tmp) / "report.png"
+        src.write_text(build_html(rd, meta, img=True), encoding="utf-8")
+        subprocess.run(
+            [chrome, "--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
+             "--allow-file-access-from-files", "--hide-scrollbars", "--virtual-time-budget=8000",
+             f"--force-device-scale-factor={scale}", f"--window-size={width},4000",
+             f"--screenshot={out}", src.as_uri()],
+            check=True, capture_output=True, timeout=90,
+        )
+        im = Image.open(out).convert("RGB")
+        # 아래쪽 빈 배경을 잘라낸다 (배경색 = 왼쪽 위 픽셀)
+        bg = Image.new("RGB", im.size, im.getpixel((0, 0)))
+        bbox = ImageChops.difference(im, bg).getbbox()
+        if bbox:
+            pad = 28 * scale
+            im = im.crop((0, 0, im.width, min(im.height, bbox[3] + pad)))
+        buf = io.BytesIO()
+        im.save(buf, format="PNG", optimize=True)
+        return buf.getvalue()
 
 
 def build_email_body(rd, meta, sender_name="[담당자명]") -> str:
