@@ -140,33 +140,9 @@ html.pdf .tbl-wrap{overflow:visible}
 html.pdf .kpi{padding:14px 12px}
 html.pdf .kpi .s{white-space:nowrap}
 @page{size:A4 portrait;margin:0}
-/* 메일용 이미지: PDF와 같은 범위(KPI ~ 요금제별 선호도), 좁은 폭 + 큰 글씨 */
+/* 메일용 이미지: PDF와 같은 범위·배치(1120px 2열), 축소 없이 원래 크기로 */
 html.img .mast{display:none!important}
 html.img body{overflow:visible}
-html.img .wrap{width:880px;gap:22px;padding:28px}
-html.img body{font-size:16px}
-html.img .kpis{grid-template-columns:repeat(4,1fr)}
-html.img .kpi{padding:16px 16px}
-html.img .kpi .k{font-size:15px}
-html.img .kpi .v{font-size:30px}
-html.img .kpi .v small{font-size:16px}
-html.img .kpi .s{font-size:14px;white-space:normal}
-html.img .card{padding:22px 22px 18px}
-html.img .card h2{font-size:20px}
-html.img .card .sub{font-size:15px}
-html.img .grid2{grid-template-columns:1fr}
-html.img .bar{grid-template-columns:96px 1fr 120px;font-size:16px;gap:12px}
-html.img .bar .track{height:18px}
-html.img .stats{font-size:15px}
-html.img .legend{font-size:15px}
-html.img .chart text{font-size:13px}
-html.img table{font-size:16px;min-width:0}
-html.img th{font-size:14px}
-html.img th,html.img td{padding:10px 8px}
-html.img td.name{min-width:170px;max-width:none;word-break:keep-all}
-html.img .share .mini{display:none}
-html.img th,html.img td{padding:10px 6px}
-html.img .kpi:last-child:nth-child(4n+3){grid-column:span 2}
 .legacy{display:flex;flex-direction:column;gap:20px}
 .toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:8px;font-size:13px}
 @media (max-width:520px){.bar{grid-template-columns:60px 1fr 80px}.kpi .v{font-size:21px}}

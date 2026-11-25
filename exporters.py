@@ -461,10 +461,10 @@ def build_pdf(rd, meta) -> bytes:
         return out.read_bytes()
 
 
-def build_image(rd, meta, width=880, scale=2) -> bytes:
+def build_image(rd, meta, width=1168, scale=2) -> bytes:
     """PDF 요약본과 같은 범위(확정 예약 KPI ~ 요금제별 선호도)를 메일 본문용 PNG로.
 
-    880px 폭·큰 글씨로 그린 뒤 2배 해상도로 찍어, 메일에서 줄여 보여도 글씨가 또렷하다.
+    PDF와 같은 2열 배치를 축소 없이 2배 해상도로 찍어, 메일에서 줄여 보여도 글씨가 또렷하다.
     """
     from PIL import Image, ImageChops
 
